@@ -2,11 +2,11 @@ package main
 
 import (
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
@@ -19,20 +19,16 @@ var bucket string
 
 func handler(w http.ResponseWriter, r *http.Request) {
 	path := strings.Replace(r.URL.Path, "/", "", 1)
+	w.Header().Set("Accept-Ranges", "bytes")
+	w.Header().Set("Cache-Control", "max-age=172800")
 
-	output, err := svc.GetObject(&s3.GetObjectInput{
+	req, _ := svc.GetObjectRequest(&s3.GetObjectInput{
 		Bucket: aws.String(bucket),
 		Key:    aws.String(path),
 	})
 
-	if err != nil {
-		w.WriteHeader(http.StatusNotFound)
-		w.Write([]byte(err.Error()))
-		return
-	}
-
-	w.Header().Set("Cache-Control", "max-age=172800")
-	io.Copy(w, output.Body)
+	url, _ := req.Presign(5 * time.Minute)
+	http.Redirect(w, r, url, 301)
 }
 
 func main() {
