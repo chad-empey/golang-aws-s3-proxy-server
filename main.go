@@ -18,17 +18,16 @@ var svc *s3.S3
 var bucket string
 
 func handler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Add("Cache-Control", "no-cache")
 	path := strings.Replace(r.URL.Path, "/", "", 1)
-	w.Header().Set("Accept-Ranges", "bytes")
-	w.Header().Set("Cache-Control", "max-age=172800")
 
 	req, _ := svc.GetObjectRequest(&s3.GetObjectInput{
 		Bucket: aws.String(bucket),
 		Key:    aws.String(path),
 	})
 
-	url, _ := req.Presign(5 * time.Minute)
-	http.Redirect(w, r, url, 301)
+	url, _ := req.Presign(20 * time.Minute)
+	http.Redirect(w, r, url, 302)
 }
 
 func main() {
