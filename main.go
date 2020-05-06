@@ -1,9 +1,8 @@
 package main
 
 import (
-	"bytes"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -32,18 +31,7 @@ func handler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	buff, err := ioutil.ReadAll(output.Body)
-
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte(err.Error()))
-		return
-	}
-
-	w.Header().Set("Cache-Control", "max-age=172800")
-	reader := bytes.NewReader(buff)
-
-	http.ServeContent(w, r, path, *output.LastModified, reader)
+	io.Copy(w, output.Body)
 }
 
 func main() {
