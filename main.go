@@ -31,6 +31,7 @@ func handler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	w.Header().Set("Cache-Control", "max-age=172800")
 	io.Copy(w, output.Body)
 }
 
