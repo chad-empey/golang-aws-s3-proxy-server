@@ -48,7 +48,8 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	})
 
 	if err != nil {
-		fmt.Println(err)
+		w.Write([]byte(err.Error()))
+		return
 	}
 
 	w.Header().Add("Accept-Ranges", "bytes")
