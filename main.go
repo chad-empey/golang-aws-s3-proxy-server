@@ -1,66 +1,88 @@
 package main
 
 import (
-	"fmt"
-	"io"
 	"log"
-	"net/http"
 	"os"
-	"strconv"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/gofiber/fiber"
 	"github.com/joho/godotenv"
 )
 
 var svc *s3.S3
 var bucket string
 
-func handler(w http.ResponseWriter, r *http.Request) {
-	path := strings.Replace(r.URL.Path, "/", "", 1)
-	value := 0
+type response struct {
+	URL       string `json:"url"`
+	ID        string `json:"id"`
+	Timestamp string `json:"timestamp"`
+}
 
-	requestRange := r.Header.Get("Range")
+func handleAWSDelete(c *fiber.Ctx) {
+	id := strings.ReplaceAll(c.Path(), "/asset/", "")
 
-	if requestRange != "" {
-		split := strings.Split(requestRange, "=")
-		next := strings.Split(split[1], "-")
-		raw := next[0]
-		value, _ = strconv.Atoi(raw)
-	}
-
-	meta, err := svc.HeadObject(&s3.HeadObjectInput{
+	resp, err := svc.DeleteObject(&s3.DeleteObjectInput{
 		Bucket: aws.String(bucket),
-		Key:    aws.String(path),
+		Key:    aws.String(id),
 	})
 
 	if err != nil {
-		w.Write([]byte(err.Error()))
+		c.Status(404)
+		c.Send(err.Error())
 		return
 	}
 
-	output, err := svc.GetObject(&s3.GetObjectInput{
+	c.Send(resp.DeleteMarker)
+}
+
+func handleAWSRedirect(c *fiber.Ctx) {
+	id := strings.ReplaceAll(c.Path(), "/asset/", "")
+	c.Set("Cache-Control", "no-cache")
+
+	req, _ := svc.GetObjectRequest(&s3.GetObjectInput{
 		Bucket: aws.String(bucket),
-		Key:    aws.String(path),
-		Range:  aws.String(fmt.Sprintf("bytes=%d-%d", value, *meta.ContentLength)),
+		Key:    aws.String(id),
 	})
 
+	url, err := req.Presign(20 * time.Minute)
+
 	if err != nil {
-		w.Write([]byte(err.Error()))
+		c.Status(404)
+		c.Send(err.Error())
 		return
 	}
 
-	w.Header().Add("Accept-Ranges", "bytes")
-	w.Header().Add("Content-Length", strconv.FormatInt(*output.ContentLength, 10))
+	c.Status(302)
+	c.Redirect(url)
+}
 
-	if value > 0 {
-		w.Header().Add("Content-Range", fmt.Sprintf("bytes %d-%d/%d", value, *meta.ContentLength-1, *meta.ContentLength))
-		w.WriteHeader(206)
+func handleUploadURL(c *fiber.Ctx) {
+	id := strings.ReplaceAll(c.Path(), "/upload/", "")
+	response := new(response)
+	t := time.Now()
+
+	req, _ := svc.PutObjectRequest(&s3.PutObjectInput{
+		Bucket: aws.String("journal-bucket1"),
+		Key:    aws.String(id),
+	})
+
+	url, err := req.Presign(15 * time.Minute)
+
+	if err != nil {
+		c.Status(500)
+		c.Send(err.Error())
+		return
 	}
 
-	io.Copy(w, output.Body)
+	response.URL = url
+	response.ID = id
+	response.Timestamp = t.String()
+
+	c.JSON(response)
 }
 
 func main() {
@@ -81,6 +103,11 @@ func main() {
 
 	svc = s3.New(sess)
 
-	http.HandleFunc("/", handler)
-	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%s", port), nil))
+	app := fiber.New()
+
+	app.Get("/asset/*", handleAWSRedirect)
+	app.Delete("/asset/*", handleAWSDelete)
+	app.Get("/upload/*", handleUploadURL)
+
+	app.Listen(port)
 }
