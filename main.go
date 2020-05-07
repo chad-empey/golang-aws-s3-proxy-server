@@ -1,9 +1,7 @@
 package main
 
 import (
-	"fmt"
 	"log"
-	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -11,23 +9,80 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/gofiber/fiber"
 	"github.com/joho/godotenv"
 )
 
 var svc *s3.S3
 var bucket string
 
-func handler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Add("Cache-Control", "no-cache")
-	path := strings.Replace(r.URL.Path, "/", "", 1)
+type response struct {
+	URL       string `json:"url"`
+	ID        string `json:"id"`
+	Timestamp string `json:"timestamp"`
+}
+
+func handleAWSDelete(c *fiber.Ctx) {
+	id := strings.ReplaceAll(c.Path(), "/asset/", "")
+
+	resp, err := svc.DeleteObject(&s3.DeleteObjectInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(id),
+	})
+
+	if err != nil {
+		c.Status(404)
+		c.Send(err.Error())
+		return
+	}
+
+	c.Send(resp.DeleteMarker)
+}
+
+func handleAWSRedirect(c *fiber.Ctx) {
+	id := strings.ReplaceAll(c.Path(), "/asset/", "")
+	c.Set("Cache-Control", "no-cache")
 
 	req, _ := svc.GetObjectRequest(&s3.GetObjectInput{
 		Bucket: aws.String(bucket),
-		Key:    aws.String(path),
+		Key:    aws.String(id),
 	})
 
-	url, _ := req.Presign(20 * time.Minute)
-	http.Redirect(w, r, url, 302)
+	url, err := req.Presign(20 * time.Minute)
+
+	if err != nil {
+		c.Status(404)
+		c.Send(err.Error())
+		return
+	}
+
+	c.Status(302)
+	c.Redirect(url)
+}
+
+func handleUploadURL(c *fiber.Ctx) {
+	id := strings.ReplaceAll(c.Path(), "/upload/", "")
+	response := new(response)
+	t := time.Now()
+
+	req, _ := svc.PutObjectRequest(&s3.PutObjectInput{
+		Bucket: aws.String("journal-bucket1"),
+		Key:    aws.String(id),
+	})
+
+	url, err := req.Presign(15 * time.Minute)
+
+	if err != nil {
+		c.Status(500)
+		c.Send(err.Error())
+		return
+	}
+
+	response.URL = url
+	response.ID = id
+	response.Timestamp = t.String()
+
+	c.JSON(response)
 }
 
 func main() {
@@ -48,6 +103,11 @@ func main() {
 
 	svc = s3.New(sess)
 
-	http.HandleFunc("/", handler)
-	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%s", port), nil))
+	app := fiber.New()
+
+	app.Get("/asset/*", handleAWSRedirect)
+	app.Delete("/asset/*", handleAWSDelete)
+	app.Get("/upload/*", handleUploadURL)
+
+	app.Listen(port)
 }
